@@ -1,0 +1,71 @@
+#define BLYNK_PRINT Serial
+#define blink
+
+
+#include <ESP8266WiFi.h>
+#include <BlynkSimpleEsp8266.h>
+
+
+char auth[] = "";
+char ssid[] = "";
+char pass[] = "";
+
+#include<Servo.h>   //including the servo library
+Servo sg90;  
+ 
+
+void setup() {
+pinMode(D7,INPUT);   //Ldr
+pinMode(D3,OUTPUT);  //buzzer
+pinMode(D1,OUTPUT);  //led-1
+pinMode(D2,OUTPUT);  //led-2
+sg90.attach(D6);     //servo motor
+
+//we haven't used a pin for laser directly use lazer diode with power and ground cuz we don't need to put logic on it
+  
+Serial.begin(9600);
+Blynk.begin(auth, ssid, pass);
+
+int x = 0;
+}
+
+void loop() {
+   Blynk.run();
+ 
+ int x = digitalRead(D7);
+ Serial.println(x);
+ if (x == HIGH){
+  
+ {sg90.write(0);}
+ 
+ {digitalWrite(D1,1);
+  delay(30);
+  digitalWrite(D1,0);
+  delay(30);}
+
+  {digitalWrite(D2,1);
+  delay(30);
+  digitalWrite(D2,0);
+  delay(30);}
+  
+  {digitalWrite(D3,1);
+   delay(30);
+   digitalWrite(D3,0);
+   delay(30);}
+   
+   {Blynk.notify("Alert! Someone is entering the house");
+  delay(400);}
+  
+    
+ }
+    
+ 
+else if (x == 0)
+  
+  {digitalWrite(D3,0);
+   digitalWrite(D2,0);
+   digitalWrite(D1,0);
+   sg90.write(180); 
+  }
+ }
+
