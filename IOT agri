@@ -1,71 +1,150 @@
-#define BLYNK_PRINT Serial
-#define blink
-
-
+#include <Servo.h>
 #include <ESP8266WiFi.h>
-#include <BlynkSimpleEsp8266.h>
+#include <DHT.h>
 
+// Wi-Fi + ThingSpeak settings
+String apiKey = "X5AQ3EGIKMBYW31H";  // ThingSpeak Write API Key
+const char* server = "api.thingspeak.com";
+const char* ssid = "CircuitLoop";
+const char* pass = "circuitdigest101";
 
-char auth[] = "";
-char ssid[] = "";
-char pass[] = "";
+// Sensor and actuator pin assignments
+#define LDR_PIN D7          // LDR sensor (digital)
+#define BUZZER_PIN D3       // Buzzer (shared pin with DHT11)
+#define LED1_PIN D1         // LED 1
+#define LED2_PIN D2         // LED 2
+#define SERVO_PIN D6        // Servo
+#define DHTPIN D5           // DHT11 connected to D5
+#define MOISTURE_PIN A0     // Analog soil moisture sensor
+#define MOTOR_PIN D0        // Relay/Motor
 
-#include<Servo.h>   //including the servo library
-Servo sg90;  
- 
+// Object declarations
+Servo sg90;
+DHT dht(DHTPIN, DHT11);
+WiFiClient client;
+
+// Timers
+unsigned long intervalThingSpeak = 10000;
+unsigned long previousMillisThingSpeak = 0;
+
+unsigned long intervalSerial = 1000;
+unsigned long previousMillisSerial = 0;
+
+// Sensor readings
+float h, t;
+float moisturePercentage;
 
 void setup() {
-pinMode(D7,INPUT);   //Ldr
-pinMode(D3,OUTPUT);  //buzzer
-pinMode(D1,OUTPUT);  //led-1
-pinMode(D2,OUTPUT);  //led-2
-sg90.attach(D6);     //servo motor
-
-//we haven't used a pin for laser directly use lazer diode with power and ground cuz we don't need to put logic on it
+  Serial.begin(115200);
   
-Serial.begin(9600);
-Blynk.begin(auth, ssid, pass);
+  // Pin setups
+  pinMode(LDR_PIN, INPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(LED1_PIN, OUTPUT);
+  pinMode(LED2_PIN, OUTPUT);
+  pinMode(MOTOR_PIN, OUTPUT);
+  digitalWrite(MOTOR_PIN, LOW); // Motor off initially
 
-int x = 0;
+  sg90.attach(SERVO_PIN);
+  dht.begin();
+
+  // Wi-Fi connection
+  Serial.println("Connecting to WiFi...");
+  WiFi.begin(ssid, pass);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected!");
 }
 
 void loop() {
-   Blynk.run();
- 
- int x = digitalRead(D7);
- Serial.println(x);
- if (x == HIGH){
-  
- {sg90.write(0);}
- 
- {digitalWrite(D1,1);
-  delay(30);
-  digitalWrite(D1,0);
-  delay(30);}
+  unsigned long currentMillis = millis();
 
-  {digitalWrite(D2,1);
-  delay(30);
-  digitalWrite(D2,0);
-  delay(30);}
-  
-  {digitalWrite(D3,1);
-   delay(30);
-   digitalWrite(D3,0);
-   delay(30);}
-   
-   {Blynk.notify("Alert! Someone is entering the house");
-  delay(400);}
-  
-    
- }
-    
- 
-else if (x == 0)
-  
-  {digitalWrite(D3,0);
-   digitalWrite(D2,0);
-   digitalWrite(D1,0);
-   sg90.write(180); 
+  // --- LDR Detection and Alert ---
+  int ldrStatus = digitalRead(LDR_PIN);
+  Serial.print("LDR status: ");
+  Serial.println(ldrStatus);
+
+  if (ldrStatus == HIGH) {
+    sg90.write(0); // Open door
+    digitalWrite(LED1_PIN, HIGH);
+    delay(30);
+    digitalWrite(LED1_PIN, LOW);
+    delay(30);
+
+    digitalWrite(LED2_PIN, HIGH);
+    delay(30);
+    digitalWrite(LED2_PIN, LOW);
+    delay(30);
+
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(30);
+    digitalWrite(BUZZER_PIN, LOW);
+    delay(30);
+
+    Serial.println("Alert! Someone is entering the house");
+    delay(400);
+  } else {
+    sg90.write(180); // Close door
+    digitalWrite(LED1_PIN, LOW);
+    digitalWrite(LED2_PIN, LOW);
+    digitalWrite(BUZZER_PIN, LOW);
   }
- }
 
+  // --- DHT11 and Moisture Readings ---
+  h = dht.readHumidity();
+  t = dht.readTemperature();
+  if (isnan(h) || isnan(t)) {
+    Serial.println("Failed to read from DHT sensor!");
+    return;
+  }
+
+  moisturePercentage = (100.00 - ((analogRead(MOISTURE_PIN) / 1023.00) * 100.00));
+
+  if ((unsigned long)(currentMillis - previousMillisSerial) >= intervalSerial) {
+    Serial.print("Soil Moisture = ");
+    Serial.print(moisturePercentage);
+    Serial.println("%");
+    previousMillisSerial = currentMillis;
+  }
+
+  // --- Motor Logic ---
+  if (moisturePercentage < 50 || (moisturePercentage > 50 && moisturePercentage < 55)) {
+    digitalWrite(MOTOR_PIN, HIGH);
+  } else if (moisturePercentage > 56) {
+    digitalWrite(MOTOR_PIN, LOW);
+  }
+
+  // --- Send to ThingSpeak ---
+  if ((unsigned long)(currentMillis - previousMillisThingSpeak) >= intervalThingSpeak) {
+    sendToThingSpeak();
+    previousMillisThingSpeak = currentMillis;
+    client.stop();
+  }
+}
+
+void sendToThingSpeak() {
+  if (client.connect(server, 80)) {
+    String postStr = apiKey;
+    postStr += "&field1=" + String(moisturePercentage);
+    postStr += "&field2=" + String(t);
+    postStr += "&field3=" + String(h);
+    postStr += "\r\n\r\n";
+
+    client.print("POST /update HTTP/1.1\n");
+    client.print("Host: api.thingspeak.com\n");
+    client.print("Connection: close\n");
+    client.print("X-THINGSPEAKAPIKEY: " + apiKey + "\n");
+    client.print("Content-Type: application/x-www-form-urlencoded\n");
+    client.print("Content-Length: " + String(postStr.length()) + "\n\n");
+    client.print(postStr);
+
+    Serial.print("Sent to ThingSpeak → Moisture: ");
+    Serial.print(moisturePercentage);
+    Serial.print("%, Temp: ");
+    Serial.print(t);
+    Serial.print(" C, Humidity: ");
+    Serial.println(h);
+  }
+}
